@@ -1,0 +1,19 @@
+[package]
+name = "actixtagram"
+version = "0.1.0"
+authors = ["Florian Gilcher <florian.gilcher@asquera.de>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+actix-web = "3"
+actix-multipart = "0.3"
+actix-files = "0.4"
+actix-rt = "1"
+blocking = "1"
+sqlx = { version = "0.4.0-beta.1", default-features = false, features = [ "runtime-tokio", "macros" ] }
+image = "0.23"
+async-channel = "1"
+futures = "0.3"
+http = "0.2"
