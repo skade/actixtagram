@@ -1,7 +1,8 @@
 use actix_web::{get, post, HttpResponse, Error};
 use actix_multipart::Multipart;
 use futures::{StreamExt, TryStreamExt};
-use std::io::Write;
+use std::io::{Cursor, Write};
+use image::io::Reader as ImageReader;
 use blocking;
 
 #[get("/")]
@@ -22,16 +23,30 @@ pub async fn save_file(mut payload: Multipart) -> Result<HttpResponse, Error> {
         let filepath = format!("./static/{}", &filename);
 
         // File::create is blocking operation, use threadpool
-        let mut f = blocking::unblock(|| std::fs::File::create(filepath))
-            .await
-            .unwrap();
+        let mut f = std::fs::File::create(filepath).unwrap();
 
+        let mut buffer: Vec<u8> = Vec::new();
         // Field in turn is stream of *Bytes* object
         while let Some(chunk) = field.next().await {
             let data = chunk.unwrap();
-            // filesystem operations are blocking, we have to use threadpool
-            f = blocking::unblock(move || f.write_all(&data).map(|_| f)).await?;
+            
+            buffer.extend_from_slice(&data);
+            //blocking::unblock(|| f.write_all(&data));
         }
+
+        blocking::unblock(move || {
+            let mut reader =  ImageReader::new(Cursor::new(buffer));
+            reader.set_format(image::ImageFormat::Png);
+
+            /// insert sql notification here
+
+            let mut img = reader.decode().unwrap();
+
+            let cropped_image = img.crop(0, 0, 250, 250);
+            
+            cropped_image.write_to(&mut f, image::ImageOutputFormat::Png).unwrap();
+        }).await;
+
     }
     Ok(HttpResponse::Ok().into())
 }

@@ -12,8 +12,9 @@ actix-multipart = "0.3"
 actix-files = "0.4"
 actix-rt = "1"
 blocking = "1"
-sqlx = { version = "0.4.0-beta.1", default-features = false, features = [ "runtime-tokio", "macros" ] }
+sqlx = { version = "0.4.0", features = [ "runtime-actix-rustls" ] }
 image = "0.23"
 async-channel = "1"
 futures = "0.3"
 http = "0.2"
+env_logger = "0.8"
