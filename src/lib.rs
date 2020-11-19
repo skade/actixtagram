@@ -6,6 +6,18 @@ use sqlx::SqlitePool;
 use image::io::Reader as ImageReader;
 use blocking;
 use tracing::{info, instrument};
+use async_channel::{Sender, Receiver};
+#[derive(Debug)]
+pub struct AppData {
+    pub pool: SqlitePool,
+    pub sender: Sender<ProcessingRequest>,
+}
+
+#[derive(Debug)]
+pub struct ProcessingRequest {
+    filename: String,
+    buffer: Vec<u8>,
+}
 
 #[get("/")]
 pub async fn hello() -> HttpResponse {
@@ -17,8 +29,8 @@ pub async fn echo(req_body: String) -> HttpResponse {
     HttpResponse::Ok().body(req_body)
 }
 
-#[instrument(name="image_processing",skip(payload,db_pool))]
-pub async fn save_file(mut payload: Multipart,  db_pool: web::Data<SqlitePool>) -> Result<HttpResponse, Error> {
+#[instrument(name="image_processing",skip(payload,app_data))]
+pub async fn save_file(mut payload: Multipart,  app_data: web::Data<AppData>) -> Result<HttpResponse, Error> {
 
     info!("Starting to read multipart file");
 
@@ -26,10 +38,6 @@ pub async fn save_file(mut payload: Multipart,  db_pool: web::Data<SqlitePool>) 
     while let Ok(Some(mut field)) = payload.try_next().await {
         let content_type = field.content_disposition().unwrap();
         let filename = content_type.get_filename().unwrap();
-        let filepath = format!("./static/{}", &filename);
-
-        // File::create is blocking operation, use threadpool
-        let mut f = std::fs::File::create(filepath).unwrap();
 
         let mut buffer: Vec<u8> = Vec::new();
         // Field in turn is stream of *Bytes* object
@@ -40,31 +48,24 @@ pub async fn save_file(mut payload: Multipart,  db_pool: web::Data<SqlitePool>) 
             //blocking::unblock(|| f.write_all(&data));
         }
 
-
         let db_filename = String::from(filename);
 
-        let db_pool = db_pool.as_ref().clone();
+        let db_pool = app_data.pool.clone();
 
         actix_rt::spawn(
             create_unprocessed_upload(db_pool, db_filename)
         );
 
-        blocking::unblock(move || {
-            let mut reader =  ImageReader::new(Cursor::new(buffer));
-            reader.set_format(image::ImageFormat::Png);
-
-            // insert sql notification here
-
-            let mut img = reader.decode().unwrap();
-
-            let cropped_image = img.crop(0, 0, 250, 250);
-            
-            cropped_image.write_to(&mut f, image::ImageOutputFormat::Png).unwrap();
-        }).await;
+        app_data.sender.send(
+            ProcessingRequest {
+                filename: String::from(filename),
+                buffer: buffer
+            }
+        ).await;
 
     }
-    drop(payload);
-    Ok(HttpResponse::Ok().into())
+
+    Ok(HttpResponse::Accepted().into())
 }
 
 #[instrument(skip(pool))]
@@ -83,3 +84,27 @@ pub async fn create_unprocessed_upload(pool: SqlitePool, filename: String) {
     .execute(&mut conn)
     .await.unwrap();  
 }
+
+pub async fn processor(mut receiver: Receiver<ProcessingRequest>) {
+    while let Some(ProcessingRequest { filename, buffer}) = receiver.next().await {        
+        blocking::unblock(move || { 
+            let filepath = format!("./static/{}", &filename);
+            let f = std::fs::File::create(filepath).unwrap();
+
+            process_and_write_image(buffer, f) 
+        }).await;
+    }
+}
+
+fn process_and_write_image(buffer: Vec<u8>, mut to: std::fs::File) {
+    let mut reader =  ImageReader::new(Cursor::new(buffer));
+    reader.set_format(image::ImageFormat::Png);
+
+    // insert sql notification here
+
+    let mut img = reader.decode().unwrap();
+
+    let cropped_image = img.crop(0, 0, 250, 250);
+    
+    cropped_image.write_to(&mut to, image::ImageOutputFormat::Png).unwrap();
+} 

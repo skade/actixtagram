@@ -3,7 +3,7 @@ use actix_files as fs;
 use sqlx::SqlitePool;
 use std::env;
 
-use actixtagram::{hello,echo,save_file};
+use actixtagram::{hello,echo,save_file, processor, ProcessingRequest, AppData};
 use tracing::{info, Level};
 
 #[actix_web::main]
@@ -18,9 +18,19 @@ async fn main() -> std::io::Result<()> {
     // DATABASE_URL: "sqlite:uploads.db"
     let sqlite = SqlitePool::connect(&env::var("DATABASE_URL").unwrap()).await.unwrap();
 
+    let (sender, receiver) = async_channel::bounded::<ProcessingRequest>(50);
+
+    for _ in 1..=8 {
+        actix_rt::spawn(
+            processor(receiver.clone())
+        );
+    }
+
     HttpServer::new(move || {
+        let app_data = AppData { pool: sqlite.clone(), sender: sender.clone() };
+
         App::new()
-            .data(sqlite.clone())
+            .data(app_data)
             .service(
                 web::resource("/upload").route(web::post().to(save_file))
             )
