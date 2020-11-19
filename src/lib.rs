@@ -17,7 +17,6 @@ pub async fn echo(req_body: String) -> HttpResponse {
 }
 
 pub async fn save_file(mut payload: Multipart,  db_pool: web::Data<SqlitePool>) -> Result<HttpResponse, Error> {
-    let mut conn = db_pool.acquire().await.unwrap();
 
     // iterate over multipart stream
     while let Ok(Some(mut field)) = payload.try_next().await {
@@ -37,21 +36,36 @@ pub async fn save_file(mut payload: Multipart,  db_pool: web::Data<SqlitePool>) 
             //blocking::unblock(|| f.write_all(&data));
         }
 
-        let id = sqlx::query!(
-            r#"
-    INSERT INTO uploads ( filename, processed )
-    VALUES ( ?1, false )
-            "#,
-            filename
-        )
-        .execute(&mut conn)
-        .await.unwrap();
+
+        let db_filename = String::from(filename);
+
+        let db_pool = db_pool.clone();
 
         blocking::unblock(move || {
+
             let mut reader =  ImageReader::new(Cursor::new(buffer));
             reader.set_format(image::ImageFormat::Png);
 
-            /// insert sql notification here
+            actix_rt::spawn(async move {
+                let mut conn = db_pool.acquire().await.unwrap();
+
+                let id = sqlx::query!(
+                    r#"
+                    INSERT INTO uploads ( filename, processed )
+                    VALUES ( ?1, false )
+                    "#,
+                    db_filename
+                )
+                .execute(&mut conn)
+                .await.unwrap();
+
+                // conn is needed anymore, drop it!
+
+                // do more stuff
+                
+            });
+
+            // insert sql notification here
 
             let mut img = reader.decode().unwrap();
 
@@ -61,5 +75,6 @@ pub async fn save_file(mut payload: Multipart,  db_pool: web::Data<SqlitePool>) 
         }).await;
 
     }
+    drop(payload);
     Ok(HttpResponse::Ok().into())
 }
