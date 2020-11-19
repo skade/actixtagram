@@ -5,6 +5,7 @@ use std::io::{Cursor, Write};
 use sqlx::SqlitePool;
 use image::io::Reader as ImageReader;
 use blocking;
+use tracing::{info, instrument};
 
 #[get("/")]
 pub async fn hello() -> HttpResponse {
@@ -16,7 +17,10 @@ pub async fn echo(req_body: String) -> HttpResponse {
     HttpResponse::Ok().body(req_body)
 }
 
+#[instrument(name="image_processing",skip(payload,db_pool))]
 pub async fn save_file(mut payload: Multipart,  db_pool: web::Data<SqlitePool>) -> Result<HttpResponse, Error> {
+
+    info!("Starting to read multipart file");
 
     // iterate over multipart stream
     while let Ok(Some(mut field)) = payload.try_next().await {
@@ -39,31 +43,15 @@ pub async fn save_file(mut payload: Multipart,  db_pool: web::Data<SqlitePool>) 
 
         let db_filename = String::from(filename);
 
-        let db_pool = db_pool.clone();
+        let db_pool = db_pool.as_ref().clone();
+
+        actix_rt::spawn(
+            create_unprocessed_upload(db_pool, db_filename)
+        );
 
         blocking::unblock(move || {
-
             let mut reader =  ImageReader::new(Cursor::new(buffer));
             reader.set_format(image::ImageFormat::Png);
-
-            actix_rt::spawn(async move {
-                let mut conn = db_pool.acquire().await.unwrap();
-
-                let id = sqlx::query!(
-                    r#"
-                    INSERT INTO uploads ( filename, processed )
-                    VALUES ( ?1, false )
-                    "#,
-                    db_filename
-                )
-                .execute(&mut conn)
-                .await.unwrap();
-
-                // conn is needed anymore, drop it!
-
-                // do more stuff
-                
-            });
 
             // insert sql notification here
 
@@ -77,4 +65,21 @@ pub async fn save_file(mut payload: Multipart,  db_pool: web::Data<SqlitePool>) 
     }
     drop(payload);
     Ok(HttpResponse::Ok().into())
+}
+
+#[instrument(skip(pool))]
+pub async fn create_unprocessed_upload(pool: SqlitePool, filename: String) {
+    info!("Writing file info into database");
+    
+    let mut conn = pool.acquire().await.unwrap();
+
+    let id = sqlx::query!(
+        r#"
+        INSERT INTO uploads ( filename, processed )
+        VALUES ( ?1, false )
+        "#,
+        filename
+    )
+    .execute(&mut conn)
+    .await.unwrap();  
 }
