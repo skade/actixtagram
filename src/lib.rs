@@ -1,7 +1,8 @@
-use actix_web::{get, post, HttpResponse, Error};
+use actix_web::{get, post, HttpResponse, Error, web};
 use actix_multipart::Multipart;
 use futures::{StreamExt, TryStreamExt};
 use std::io::{Cursor, Write};
+use sqlx::SqlitePool;
 use image::io::Reader as ImageReader;
 use blocking;
 
@@ -15,7 +16,9 @@ pub async fn echo(req_body: String) -> HttpResponse {
     HttpResponse::Ok().body(req_body)
 }
 
-pub async fn save_file(mut payload: Multipart) -> Result<HttpResponse, Error> {
+pub async fn save_file(mut payload: Multipart,  db_pool: web::Data<SqlitePool>) -> Result<HttpResponse, Error> {
+    let mut conn = db_pool.acquire().await.unwrap();
+
     // iterate over multipart stream
     while let Ok(Some(mut field)) = payload.try_next().await {
         let content_type = field.content_disposition().unwrap();
@@ -33,6 +36,16 @@ pub async fn save_file(mut payload: Multipart) -> Result<HttpResponse, Error> {
             buffer.extend_from_slice(&data);
             //blocking::unblock(|| f.write_all(&data));
         }
+
+        let id = sqlx::query!(
+            r#"
+    INSERT INTO uploads ( filename, processed )
+    VALUES ( ?1, false )
+            "#,
+            filename
+        )
+        .execute(&mut conn)
+        .await.unwrap();
 
         blocking::unblock(move || {
             let mut reader =  ImageReader::new(Cursor::new(buffer));

@@ -12,7 +12,7 @@ actix-multipart = "0.3"
 actix-files = "0.4"
 actix-rt = "1"
 blocking = "1"
-sqlx = { version = "0.4.0", features = [ "runtime-actix-rustls" ] }
+sqlx = { version = "0.4.0", features = [ "runtime-actix-rustls", "sqlite" ] }
 image = "0.23"
 async-channel = "1"
 futures = "0.3"
